@@ -1,5 +1,8 @@
 all: check clippy test
 
+clean:
+	rm -rf ./target
+
 check:
 	cargo check
 
