@@ -1,4 +1,7 @@
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Type {
     Insert,
     Delete,
@@ -7,7 +10,8 @@ pub enum Type {
     Noop,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Operation {
     op: Type,
     count: isize,
@@ -16,40 +20,23 @@ pub struct Operation {
 
 impl Operation {
     pub fn insert(chars: &str) -> Self {
-        Self::from_op_and_count_and_chars("insert", Default::default(), chars)
+        Self { op: Type::Insert, chars: chars.to_owned(), ..Default::default() }
     }
 
     pub fn skip(count: isize) -> Self {
-        Self::from_op_and_count_and_chars("skip", count, Default::default())
+        Self { op: Type::Skip, count, ..Default::default() }
     }
 
     pub fn delete(count: isize) -> Self {
-        Self::from_op_and_count_and_chars("delete", count, Default::default())
+        Self { op: Type::Delete, count, ..Default::default() }
     }
 
     pub fn noop() -> Self {
-        Self::from_op_and_count_and_chars("noop", Default::default(), Default::default())
-    }
-
-    pub fn from_op_and_count_and_chars(op: &str, count: isize, chars: &str) -> Self {
-        Operation {
-            op: Self::get_op_type(op),
-            count,
-            chars: chars.to_owned(),
-        }
-    }
-
-    fn get_op_type(op: &str) -> Type {
-        match op {
-            "insert" => Type::Insert,
-            "delete" => Type::Delete,
-            "skip" => Type::Skip,
-            _ => Type::Noop,
-        }
+        Self { op: Type::Noop, ..Default::default() }
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Default)]
 pub struct Document {
     pub pos: usize,
     pub content: String,
@@ -103,6 +90,48 @@ impl Document {
             };
 
         self
+    }
+}
+
+impl From<&str> for Document {
+    fn from(content: &str) -> Self {
+        Self { content: content.to_string(), ..Default::default() }
+    }
+}
+
+impl PartialEq for Document {
+    fn eq(&self, other: &Self) -> bool {
+        self.content == other.content
+    }
+}
+
+impl Eq for Document {}
+
+#[derive(Debug, Default)]
+struct Verify {
+    stale: Document,
+    latest: Document,
+    operations: Vec<Operation>,
+}
+
+#[allow(dead_code)] // somehow needed because only used in tests
+impl Verify {
+    pub fn new(stale: &str, latest: &str, operations_json: &str) -> Self {
+        Verify {
+            stale: Document::from(stale),
+            latest: Document::from(latest),
+            operations: serde_json::from_str(operations_json).unwrap(),
+        }
+    }
+
+    pub fn execute(&self) -> bool {
+        let mut stale_doc = self.stale.clone();
+
+        for operation in &self.operations {
+            stale_doc.transform(operation);
+        }
+
+        stale_doc == self.latest
     }
 }
 
@@ -204,5 +233,23 @@ mod test {
             Operation::delete(40),
             Operation{op: Type::Delete, count: 40, chars: Default::default()}
         );
+    }
+
+    #[test]
+    fn test_operations_deserialize() {
+        let data = r#"[{"op": "skip", "count": 40}, {"op": "delete", "count": 47}, {"op": "insert", "chars": "hello"}]"#;
+        let ops: Vec<Operation> = serde_json::from_str(data).unwrap();
+        assert_eq!(ops, vec![Operation::skip(40), Operation::delete(47), Operation::insert("hello")]);
+    }
+
+    #[test]
+    fn test_verify_works() {
+        let verify = Verify::new(
+            "Repl.it uses operational transformations to keep everyone in a multiplayer repl in sync.",
+            "Repl.it uses operational transformations.",
+            r#"[{"op": "skip", "count": 40}, {"op": "delete", "count": 47}]"#
+        );
+
+        assert!(verify.execute());
     }
 }
